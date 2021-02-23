@@ -11,6 +11,7 @@
 #include <string.h>
 #include <net/if.h>
 #include <sys/ioctl.h>
+#include<netdb.h>
 
 #include <poll.h>
 #include <signal.h>
@@ -50,15 +51,17 @@ int main(int argc, char **argv) {
 
     struct sockaddr_in peerAddr;
 	socklen_t peerAddrLen = sizeof(peerAddr);
-	memset((char *) &peerAddr, 0, peerAddrLen);
-	peerAddr.sin_family = AF_INET;
-	peerAddr.sin_port = htons(28314);
-	if (inet_aton("127.0.0.1", &peerAddr.sin_addr) == 0) 
-	{
-		printf("ERROR: Failed to parse peer address\n");
+
+    struct addrinfo *addrInfo;
+    int result = getaddrinfo("wooten.smr.llc", NULL, NULL, &addrInfo);
+    if (result != 0) {
+		printf("ERROR: Failed to resolve hostname into address, error: %d\n", result);
 		fflush(stdout);
 		return -1;
-	}
+    }
+    memcpy(&peerAddr, addrInfo->ai_addr, addrInfo->ai_addrlen);
+	peerAddr.sin_port = htons(28314);
+    freeaddrinfo(addrInfo);
 
 	int sock;
     int nBytes;

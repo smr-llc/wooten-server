@@ -28,6 +28,7 @@ std::string Session::sid() const {
 
 std::shared_ptr<PacketHandler> Session::join(ConnectionHandler *conn, const JoinData &data) {
     conn->setSession(m_sid, data);
+    conn->sendResponse(PTYPE_JOINED, conn->joinedData(), sizeof(JoinedData));
 
     {
         std::lock_guard<std::mutex> guard(this->m_mutex);

@@ -42,3 +42,9 @@ typedef struct {
     struct in_addr publicAddr;
     char connId[6];
 } JoinedData;
+
+typedef struct {
+    uint8_t magic = MAGIC;
+    uint8_t version = CONN_PKT_VERSION;
+    uint8_t type = PTYPE_HOLEPUNCH;
+} NatHolepunchPkt;

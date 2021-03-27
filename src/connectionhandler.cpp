@@ -187,3 +187,27 @@ int ConnectionHandler::sendResponse(uint8_t type, const void *data, size_t dataL
     }
     return res;
 }
+
+int ConnectionHandler::sendNatHolepunch() {
+    int sock = socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK, IPPROTO_UDP);
+    if (sock == -1)
+	{
+		std::cerr << "Failed to create outgoing udp socket for NAT holepunch!\n";
+		return 1;	
+	}
+
+    struct sockaddr_in peerAddr;
+	socklen_t peerAddrLen = sizeof(peerAddr);
+	memset((char *) &peerAddr, 0, peerAddrLen);
+	peerAddr.sin_family = AF_INET;
+	peerAddr.sin_port = m_joinedData.port;
+	memcpy(&peerAddr.sin_addr, &m_joinedData.publicAddr, sizeof(struct in_addr));
+
+    NatHolepunchPkt pkt;
+    sendto(sock,
+            (char*)&pkt,
+            sizeof(NatHolepunchPkt),
+            0,
+            (struct sockaddr *) &peerAddr,
+            peerAddrLen);
+}

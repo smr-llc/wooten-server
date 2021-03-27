@@ -21,6 +21,7 @@ public:
 
     int sendErr(uint8_t type);
     int sendResponse(uint8_t type, const void *data = nullptr, size_t dataLen = CONN_PKT_DATA_LEN);
+    int sendNatHolepunch();
 
     void setSid(std::string sid);
     void setSession(std::string sid, const JoinData &joinData);

@@ -87,6 +87,8 @@ PacketHandlerFn Session::heartbeatHandler() {
 
         std::cout << "Received heartbeat, responding...\n";
         conn->sendResponse(PTYPE_HEARTBEAT);
+        std::cout << "Sending UDP packet for NAT holepunch";
+        conn->sendNatHolepunch();
         return std::shared_ptr<PacketHandler>();
     };
 }

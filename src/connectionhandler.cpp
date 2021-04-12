@@ -32,10 +32,16 @@ ConnectionHandler::~ConnectionHandler() {
     if (m_thread.get()) {
         m_thread->join();
     }
+    std::cout << "Closing connection with " << addrStr() << "...\n";
+    close(m_sock);
 }
 
-ConnectionHandler* ConnectionHandler::create(int sock, struct sockaddr_in addr, std::shared_ptr<PacketHandler> pktHandler) {
+ConnectionHandler* ConnectionHandler::create(int sock, struct sockaddr_in addr, std::shared_ptr<PacketHandler> pktHandler, in_port_t udpPort) {
     auto handler = new ConnectionHandler(sock, addr, pktHandler);
+    if (handler->initializeNatMapping(udpPort) != 0) {
+        delete handler;
+        return nullptr;
+    }
     handler->m_thread = std::make_unique<std::thread>(&ConnectionHandler::handlerLoop, handler);
     return handler;
 }
@@ -63,14 +69,74 @@ void ConnectionHandler::setSid(std::string sid) {
 
 void ConnectionHandler::setSession(std::string sid, const JoinData &joinData) {
     setSid(sid);
-    m_joinedData.port = joinData.port;
+    m_joinedData.privatePort = joinData.privatePort;
     m_joinedData.privateAddr = joinData.privateAddr;
-    m_joinedData.publicAddr = m_addr.sin_addr;
     memcpy(m_joinedData.connId, m_connId.c_str(), 6);
 }
 
 const JoinedData* ConnectionHandler::joinedData() const {
     return &m_joinedData;
+}
+
+int ConnectionHandler::initializeNatMapping(in_port_t udpPort) {
+    int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (sock == -1)
+	{
+		std::cerr << "ERROR: Failed to create UDP receive socket for NAT mapping, got errno " << errno << "\n";
+		return -1;
+	}
+
+	struct sockaddr_in addr;
+	memset((char *) &addr, 0, sizeof(addr));
+	addr.sin_family = AF_INET;
+	addr.sin_port = udpPort;
+	addr.sin_addr.s_addr = htonl(INADDR_ANY);
+
+	if( bind(sock, (struct sockaddr*)&addr, sizeof(addr) ) == -1)
+	{
+		std::cerr << "ERROR: Failed to bind UDP receive socket for NAT mapping, got errno " << errno << "\n";
+        close(sock);
+		return -1;
+	}
+
+    struct timeval tv;
+    tv.tv_sec = 2;
+    tv.tv_usec = 0;
+    if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0) {
+        std::cerr << "ERROR: Failed to set timeout for UDP receive socket for NAT mapping\n";
+        close(sock);
+        return -1;
+    }
+
+    ConnPkt pkt;
+	struct sockaddr_in peerAddr;
+    socklen_t peerAddrLen = sizeof(peerAddr);
+    while (true) {
+        int nBytes = recvfrom(sock, &pkt, sizeof(ConnPkt), 0, (struct sockaddr *) &peerAddr, &peerAddrLen);
+        
+        if (nBytes < 0) {
+            std::cerr << "ERROR: Failed to read client UDP message, got errno " << errno << "\n";
+            close(sock);
+            return -1;
+        }
+
+        if (nBytes != sizeof(ConnPkt)) {
+            std::cerr << "WARN: Invalid client UDP message size " << nBytes << "\n";
+            continue;
+        }
+
+        if (peerAddr.sin_addr.s_addr != m_addr.sin_addr.s_addr) {
+            std::cerr << "WARN: Client UDP message from unexpected IP " << inet_ntoa(peerAddr.sin_addr) << " (waiting for " << addrStr() << ")\n";
+            continue;
+        }
+
+        std::cout << "INFO: Public address and port established for connection: " << addrStr() << ":" << ntohs(peerAddr.sin_port) << "\n";
+        m_joinedData.publicPort = peerAddr.sin_port;
+        m_joinedData.publicAddr = m_addr.sin_addr;
+        
+        close(sock);
+        return sendNatHolepunch();
+    }
 }
 
 void ConnectionHandler::handlerLoop() {
@@ -146,8 +212,6 @@ void ConnectionHandler::handlerLoop() {
             m_pktHandler = result;
         }
     }
-    std::cout << "Closing connection with " << sAddr << "...\n";
-    close(m_sock);
     m_done = true;
 }
 
@@ -200,14 +264,27 @@ int ConnectionHandler::sendNatHolepunch() {
 	socklen_t peerAddrLen = sizeof(peerAddr);
 	memset((char *) &peerAddr, 0, peerAddrLen);
 	peerAddr.sin_family = AF_INET;
-	peerAddr.sin_port = m_joinedData.port;
+	peerAddr.sin_port = m_joinedData.publicPort;
 	memcpy(&peerAddr.sin_addr, &m_joinedData.publicAddr, sizeof(struct in_addr));
 
-    NatHolepunchPkt pkt;
-    sendto(sock,
+    ConnPkt pkt;
+    memset(&pkt, 0, sizeof(ConnPkt));
+    pkt.magic = MAGIC;
+    pkt.version = CONN_PKT_VERSION;
+    pkt.type = PTYPE_HOLEPUNCH;
+    memcpy(pkt.sid, m_sid.c_str(), 4);
+    memcpy(pkt.connId, m_connId.c_str(), 6);
+    
+    ssize_t nBytes = sendto(sock,
             (char*)&pkt,
-            sizeof(NatHolepunchPkt),
+            sizeof(ConnPkt),
             0,
             (struct sockaddr *) &peerAddr,
             peerAddrLen);
+    if (nBytes < 0) {
+		std::cerr << "Failed to send NAT holepunch, got errno " << errno << "\n";
+		return -1;	
+    }
+    
+    return 0;
 }

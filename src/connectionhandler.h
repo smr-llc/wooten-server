@@ -12,7 +12,7 @@ class ConnectionHandler {
 public:
     ~ConnectionHandler();
 
-    static ConnectionHandler* create(int sock, struct sockaddr_in addr, std::shared_ptr<PacketHandler> pktHandler);
+    static ConnectionHandler* create(int sock, struct sockaddr_in addr, std::shared_ptr<PacketHandler> pktHandler, in_port_t udpPort);
 
     std::string connId() const;
     struct sockaddr_in addr() const;
@@ -32,6 +32,7 @@ protected:
 private:
     ConnectionHandler(int sock, struct sockaddr_in addr, std::shared_ptr<PacketHandler> pktHandler);
     void handlerLoop();
+    int initializeNatMapping(in_port_t udpPort);
 
     int m_sock;
     struct sockaddr_in m_addr;

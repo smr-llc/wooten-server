@@ -24,12 +24,25 @@ int Server::listenImpl(uint16_t port) {
         return -1;
     }
 
-	struct sockaddr_in addr;
+    struct timeval tv;
+	tv.tv_sec = 2;
+	tv.tv_usec = 0;
+	if (setsockopt(m_sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0) {
+        std::cerr << "FATAL: failed to set receive timeout on TCP socket! errno: " << errno << "\n";
+        return -1;
+	}
+
+    int enableReuse = 1;
+	if (setsockopt(m_sock, SOL_SOCKET, SO_REUSEADDR, &enableReuse, sizeof(int)) < 0) {
+        std::cerr << "FATAL: failed to set port re-use on TCP socket! errno: " << errno << "\n";
+        return -1;
+	}
+
+    struct sockaddr_in addr;
 	memset((char *) &addr, 0, sizeof(addr));
 	addr.sin_family = AF_INET;
 	addr.sin_port = htons(port);
 	addr.sin_addr.s_addr = htonl(INADDR_ANY);
-
 	if(bind(m_sock, (struct sockaddr*)&addr, sizeof(addr)) == -1) {
         std::cerr << "FATAL: server failed to bind to port " << port << "! errno: " << errno << "\n";
         close(m_sock);
@@ -40,15 +53,6 @@ int Server::listenImpl(uint16_t port) {
         std::cerr << "FATAL: server failed to listen with TCP socket! errno: " << errno << "\n";
         close(m_sock);
 		return -1;
-	}
-
-    struct timeval tv;
-	tv.tv_sec = 2;
-	tv.tv_usec = 0;
-	if (setsockopt(m_sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0) {
-        std::cerr << "FATAL: failed to set receive timeout on TCP socket! errno: " << errno << "\n";
-        close(m_sock);
-        return -1;
 	}
 
 	struct sockaddr_in peerAddr;
@@ -72,7 +76,11 @@ int Server::listenImpl(uint16_t port) {
         funcs.push_back(joinHandler());
 
         std::shared_ptr<PacketHandler> pktHandler(new PacketHandler(funcs));
-        std::shared_ptr<ConnectionHandler> handler(ConnectionHandler::create(connSock, peerAddr, pktHandler));
+        ConnectionHandler *conn = ConnectionHandler::create(connSock, peerAddr, pktHandler, addr.sin_port);
+        if (!conn) {
+            continue;
+        }
+        std::shared_ptr<ConnectionHandler> handler(conn);
         m_handlers.push_back(handler);
     }
 }

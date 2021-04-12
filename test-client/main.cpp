@@ -41,6 +41,108 @@ int getLocalIp(std::string interface, struct in_addr &addr) {
     return 0;
 }
 
+int connectToServer(struct sockaddr_in serverAddr) {
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) {
+        std::cerr << "FATAL: failed to create TCP socket! errno: " << errno << "\n";
+        return -1;
+    }
+
+    // int udpSendSock = socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK, IPPROTO_UDP);
+    // if (udpSendSock == -1)
+	// {
+	// 	std::cerr << "Failed to create outgoing udp socket for NAT holepunch!\n";
+	// 	return -1;	
+	// }
+
+    int udpSock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (udpSock == -1)
+	{
+		std::cerr << "FATAL: Failed to create UDP receive socket for NAT mapping, got errno " << errno << "\n";
+		return -1;
+	}
+
+	struct sockaddr_in addr;
+	memset((char *) &addr, 0, sizeof(addr));
+	addr.sin_family = AF_INET;
+	addr.sin_port = htons(43000);
+	addr.sin_addr.s_addr = htonl(INADDR_ANY);
+
+	if( bind(udpSock, (struct sockaddr*)&addr, sizeof(addr) ) == -1)
+	{
+		std::cerr << "ERROR: Failed to bind UDP receive socket for NAT mapping, got errno " << errno << "\n";
+        close(udpSock);
+		return -1;
+	}
+
+    struct timeval tv;
+    tv.tv_sec = 0;
+    tv.tv_usec = 500000;
+    if (setsockopt(udpSock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0) {
+        std::cerr << "ERROR: Failed to set timeout for UDP receive socket for NAT mapping\n";
+        close(udpSock);
+        return -1;
+    }
+
+    if (connect(sock, (struct sockaddr *) &serverAddr, sizeof(serverAddr)) != 0) {
+        std::cerr << "FATAL: failed to connect TCP socket! errno: " << errno << "\n";
+        close(udpSock);
+        return -1;
+    }
+
+    ConnPkt recvPkt;
+	struct sockaddr_in peerAddr;
+    socklen_t peerAddrLen = sizeof(peerAddr);
+    ConnPkt sendPkt;
+    sendPkt.magic = MAGIC;
+    sendPkt.version = CONN_PKT_VERSION;
+    sendPkt.type = PTYPE_HOLEPUNCH;
+    int tries = 0;
+    while (true) {
+        tries++;
+        if (tries > 5) {
+            break;
+        }
+        ssize_t nBytes = sendto(udpSock,
+            (char*)&sendPkt,
+            sizeof(ConnPkt),
+            0,
+            (struct sockaddr *) &serverAddr,
+            sizeof(serverAddr));
+        if (nBytes < 0) {
+            std::cerr << "Failed to send NAT holepunch, got errno " << errno << "\n";
+            break;
+        }
+
+        nBytes = recvfrom(udpSock, &recvPkt, sizeof(ConnPkt), 0, (struct sockaddr *) &peerAddr, &peerAddrLen);
+        
+        if (nBytes < 0) {
+            if (errno == EAGAIN) {
+                continue;
+            }
+            std::cerr << "ERROR: Failed to read server UDP message, got errno " << errno << "\n";
+            break;
+        }
+
+        if (nBytes != sizeof(ConnPkt)) {
+            std::cerr << "WARN: Invalid server UDP message size " << nBytes << "\n";
+            continue;
+        }
+
+        if (peerAddr.sin_addr.s_addr != serverAddr.sin_addr.s_addr) {
+            std::cerr << "WARN: Server UDP message from unexpected IP " << inet_ntoa(peerAddr.sin_addr) << " (waiting for " << inet_ntoa(serverAddr.sin_addr) << ")\n";
+            continue;
+        }
+
+        close(udpSock);
+        return sock;
+    }
+
+    close(sock);
+    close(udpSock);
+    return -1;
+}
+
 int main(int argc, char **argv) {
 
     struct in_addr localIp;
@@ -53,7 +155,7 @@ int main(int argc, char **argv) {
 	socklen_t peerAddrLen = sizeof(peerAddr);
 
     struct addrinfo *addrInfo;
-    int result = getaddrinfo("wooten.smr.llc", NULL, NULL, &addrInfo);
+    int result = getaddrinfo("127.0.0.1", NULL, NULL, &addrInfo);
     if (result != 0) {
 		printf("ERROR: Failed to resolve hostname into address, error: %d\n", result);
 		fflush(stdout);
@@ -70,16 +172,8 @@ int main(int argc, char **argv) {
     std::string sid;
     
     if (argc == 1) {
-        sock = socket(AF_INET, SOCK_STREAM, 0);
-        if (sock < 0) {
-            std::cerr << "FATAL: failed to create TCP socket! errno: " << errno << "\n";
-            return -1;
-        }
-
-
-        if (connect(sock, (struct sockaddr*)&peerAddr, peerAddrLen) != 0) {
-            std::cerr << "FATAL: failed to connect TCP socket! errno: " << errno << "\n";
-            close(sock);
+        sock = connectToServer(peerAddr);
+        if (sock == -1) {
             return -1;
         }
 
@@ -105,22 +199,16 @@ int main(int argc, char **argv) {
         sid = argv[1];
     }
     
-    sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (sock < 0) {
-        std::cerr << "FATAL: failed to create TCP socket! errno: " << errno << "\n";
+    sock = connectToServer(peerAddr);
+    if (sock == -1) {
         return -1;
     }
-    if (connect(sock, (struct sockaddr*)&peerAddr, peerAddrLen) != 0) {
-        std::cerr << "FATAL: failed to connect TCP socket! errno: " << errno << "\n";
-		close(sock);
-		return -1;
-	}
 
     std::cout << "Joining Session: " << sid << "\n";
     sendPkt.magic = MAGIC;
     sendPkt.type = PTYPE_JOIN;
     JoinData data;
-    data.port = htons(43000);
+    data.privatePort = htons(43000);
     data.privateAddr = localIp;
     memcpy(sendPkt.sid, sid.c_str(), 4);
     memcpy(sendPkt.data, &data, sizeof(JoinData));
@@ -146,8 +234,9 @@ int main(int argc, char **argv) {
     JoinedData joined;
     memcpy(&joined, pkt.data, sizeof(JoinedData));
 
-    std::cout << "Port: " << ntohs(joined.port) << "\n";
+    std::cout << "Private Port: " << ntohs(joined.privatePort) << "\n";
     std::cout << "Private IP: " << inet_ntoa(joined.privateAddr) << "\n";
+    std::cout << "Public Port: " << ntohs(joined.publicPort) << "\n";
     std::cout << "Public IP: " << inet_ntoa(joined.publicAddr) << "\n";
 
     sigset_t sigMask;

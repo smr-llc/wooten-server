@@ -5,6 +5,7 @@
 #include <iostream>
 #include <random>
 #include <poll.h>
+#include <sys/time.h>
 #include <signal.h>
 
 ConnectionHandler::ConnectionHandler(int sock, struct sockaddr_in addr, std::shared_ptr<PacketHandler> pktHandler) :
@@ -133,7 +134,7 @@ int ConnectionHandler::initializeNatMapping(in_port_t udpPort) {
         std::cout << "INFO: Public address and port established for connection: " << addrStr() << ":" << ntohs(peerAddr.sin_port) << "\n";
         m_joinedData.publicPort = peerAddr.sin_port;
         m_joinedData.publicAddr = m_addr.sin_addr;
-        
+
         close(sock);
         return sendNatHolepunch();
     }

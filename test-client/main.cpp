@@ -48,13 +48,6 @@ int connectToServer(struct sockaddr_in serverAddr) {
         return -1;
     }
 
-    // int udpSendSock = socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK, IPPROTO_UDP);
-    // if (udpSendSock == -1)
-	// {
-	// 	std::cerr << "Failed to create outgoing udp socket for NAT holepunch!\n";
-	// 	return -1;	
-	// }
-
     int udpSock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (udpSock == -1)
 	{

@@ -61,7 +61,7 @@ int connectToServer(struct sockaddr_in serverAddr) {
 	addr.sin_port = htons(43000);
 	addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
-	if( bind(udpSock, (struct sockaddr*)&addr, sizeof(addr) ) == -1)
+	if( bind(udpSock, (struct sockaddr*)&addr, sizeof(struct sockaddr_in) ) == -1)
 	{
 		std::cerr << "ERROR: Failed to bind UDP receive socket for NAT mapping, got errno " << errno << "\n";
         close(udpSock);
@@ -83,6 +83,9 @@ int connectToServer(struct sockaddr_in serverAddr) {
         return -1;
     }
 
+
+    std::cout << "Connected to TCP on " << inet_ntoa(serverAddr.sin_addr) << "\n";
+
     ConnPkt recvPkt;
 	struct sockaddr_in peerAddr;
     socklen_t peerAddrLen = sizeof(peerAddr);
@@ -94,14 +97,17 @@ int connectToServer(struct sockaddr_in serverAddr) {
     while (true) {
         tries++;
         if (tries > 5) {
+            std::cerr << "ERROR: Never received a UDP holepunch response, closing...\n";
             break;
         }
+
+        std::cout << "Sending UDP holepunch part 1 to " << inet_ntoa(serverAddr.sin_addr) << ":" << ntohs(serverAddr.sin_port) << "\n";
         ssize_t nBytes = sendto(udpSock,
             (char*)&sendPkt,
             sizeof(ConnPkt),
             0,
             (struct sockaddr *) &serverAddr,
-            sizeof(serverAddr));
+            sizeof(struct sockaddr_in));
         if (nBytes < 0) {
             std::cerr << "Failed to send NAT holepunch, got errno " << errno << "\n";
             break;

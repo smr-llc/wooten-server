@@ -32,9 +32,10 @@ protected:
 private:
     ConnectionHandler(int sock, struct sockaddr_in addr, std::shared_ptr<PacketHandler> pktHandler);
     void handlerLoop();
-    int initializeNatMapping(in_port_t udpPort);
+    int initializeNatMapping();
 
     int m_sock;
+    struct sockaddr_in m_udpAddr;
     struct sockaddr_in m_addr;
     std::atomic<bool> m_terminate;
     std::atomic<bool> m_done;

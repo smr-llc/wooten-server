@@ -25,6 +25,10 @@ ConnectionHandler::ConnectionHandler(int sock, struct sockaddr_in addr, std::sha
         this->m_connId.push_back(letters[dist(rng)]);
     }
 
+    memset((char *) &m_udpAddr, 0, sizeof(struct sockaddr_in));
+	m_udpAddr.sin_family = AF_INET;
+	m_udpAddr.sin_addr.s_addr = htonl(INADDR_ANY);
+
     memset(&m_joinedData, 0, sizeof(JoinedData));
 }
 
@@ -39,7 +43,15 @@ ConnectionHandler::~ConnectionHandler() {
 
 ConnectionHandler* ConnectionHandler::create(int sock, struct sockaddr_in addr, std::shared_ptr<PacketHandler> pktHandler, in_port_t udpPort) {
     auto handler = new ConnectionHandler(sock, addr, pktHandler);
-    if (handler->initializeNatMapping(udpPort) != 0) {
+
+	handler->m_udpAddr.sin_port = udpPort;
+
+    memset((char *) &addr, 0, sizeof(addr));
+	addr.sin_family = AF_INET;
+	addr.sin_port = udpPort;
+	addr.sin_addr.s_addr = htonl(INADDR_ANY);
+
+    if (handler->initializeNatMapping() != 0) {
         delete handler;
         return nullptr;
     }
@@ -79,24 +91,11 @@ const JoinedData* ConnectionHandler::joinedData() const {
     return &m_joinedData;
 }
 
-int ConnectionHandler::initializeNatMapping(in_port_t udpPort) {
+int ConnectionHandler::initializeNatMapping() {
     int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (sock == -1)
 	{
 		std::cerr << "ERROR: Failed to create UDP receive socket for NAT mapping, got errno " << errno << "\n";
-		return -1;
-	}
-
-	struct sockaddr_in addr;
-	memset((char *) &addr, 0, sizeof(addr));
-	addr.sin_family = AF_INET;
-	addr.sin_port = udpPort;
-	addr.sin_addr.s_addr = htonl(INADDR_ANY);
-
-	if( bind(sock, (struct sockaddr*)&addr, sizeof(addr) ) == -1)
-	{
-		std::cerr << "ERROR: Failed to bind UDP receive socket for NAT mapping, got errno " << errno << "\n";
-        close(sock);
 		return -1;
 	}
 
@@ -108,6 +107,20 @@ int ConnectionHandler::initializeNatMapping(in_port_t udpPort) {
         close(sock);
         return -1;
     }
+
+    int enableReuse = 1;
+	if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &enableReuse, sizeof(int)) < 0) {
+        std::cerr << "FATAL: failed to set port re-use on UDP socket! errno: " << errno << "\n";
+        close(sock);
+        return -1;
+	}
+
+	if( bind(sock, (struct sockaddr*)&m_udpAddr, sizeof(struct sockaddr_in) ) == -1)
+	{
+		std::cerr << "ERROR: Failed to bind UDP receive socket for NAT mapping, got errno " << errno << "\n";
+        close(sock);
+		return -1;
+	}
 
     ConnPkt pkt;
 	struct sockaddr_in peerAddr;
@@ -259,6 +272,20 @@ int ConnectionHandler::sendNatHolepunch() {
 	{
 		std::cerr << "Failed to create outgoing udp socket for NAT holepunch!\n";
 		return 1;	
+	}
+
+    int enableReuse = 1;
+	if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &enableReuse, sizeof(int)) < 0) {
+        std::cerr << "FATAL: failed to set port re-use on UDP socket for NAT holepunch! errno: " << errno << "\n";
+        close(sock);
+        return 1;
+	}
+
+	if( bind(sock, (struct sockaddr*)&m_udpAddr, sizeof(struct sockaddr_in) ) == -1)
+	{
+		std::cerr << "ERROR: Failed to bind UDP send socket for NAT holepunch, got errno " << errno << "\n";
+        close(sock);
+		return 1;
 	}
 
     struct sockaddr_in peerAddr;
